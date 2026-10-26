@@ -56,6 +56,26 @@ manually. Alternately, the MATLAB functions get_param and set_param can be used 
 command line.
 
 
+## Generating Nominal Datasets with Variation
+
+The functions in [MATLAB/Variation](MATLAB/Variation) run the nominal model many times. Each run varies the physical system the way a real testbed varies, so the output can serve as a dataset. Three sources of variation are applied:
+
+* **Component and initial-condition dispersion (per run):** battery capacity, RC network and initial voltage; thermal properties of batteries and lamps; load, fan and pump parameters; inverter setpoints; and ambient temperature. Each is drawn from a truncated normal distribution around its nominal value and written to the block's mask parameter before the run.
+* **Process noise (within a run):** slowly varying disturbances on ambient temperature, inverter output voltage and load resistances. These are modelled as first-order Gauss-Markov processes. Noise generator blocks are inserted into the bond graph elements in memory, so the saved model is never changed.
+* **Sensor noise:** white noise, a per-run calibration bias and gain error, and optional quantization, applied to the 73 logged sensors. Relay position sensors (ESH) are left noise-free. Because the sensors only feed the model's outputs, this is equivalent to adding the noise inside the model.
+
+```matlab
+cfg = defaultNoiseConfig();      % edit fields to change magnitudes or disable a source
+cfg.stopTime = 1200;             % seconds
+cfg.outputDir = 'nominal_runs';  % optional: save each run to run_NNNN.mat
+results = runVirtualADAPTMonteCarlo(20, cfg);
+
+e240 = strcmp(results(1).sensorNames, 'E240');
+plot(results(1).time, results(1).data(:, e240), results(1).time, results(1).clean(:, e240))
+```
+
+Each run stores the noisy data, the noise-free data, the parameter values drawn, the process noise seeds and the sensor calibration errors. Runs are reproducible from `cfg.seed` and the run index. Relays are simulated in the positions set on the model's manual switches. The default magnitudes in `defaultNoiseConfig.m` are placeholders: calibrate them against nominal data from the real testbed before relying on the datasets.
+
 ## Extended Documentation
 
 The document [VirtualADAPT.pdf](https://github.com/nasa/VirtualADAPT/blob/master/docs/VirtualADAPT.pdf) describes the Virtual ADAPT simulation model in more detail. Please refer to this document for instructions on running the simulation.
