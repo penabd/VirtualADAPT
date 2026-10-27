@@ -8,9 +8,9 @@ function cfg = defaultNoiseConfig()
 %                           initial conditions (manufacturing tolerances,
 %                           battery state of charge, ambient temperature).
 %     cfg.processNoise    - time-varying disturbances inside the model
-%                           (ambient drift, inverter regulation ripple, load
-%                           fluctuation), modelled as first-order
-%                           Gauss-Markov (Ornstein-Uhlenbeck) processes.
+%                           (ambient drift and HVAC cycling, inverter
+%                           regulation wander, load fluctuation), modelled
+%                           as first- or second-order Gauss-Markov processes.
 %     cfg.sensorNoise     - measurement noise, per-run calibration bias and
 %                           gain error, and quantization on the logged sensors.
 %
@@ -80,12 +80,21 @@ cfg.processNoise.enable = true;
 cfg.processNoise.sampleTime = 1;
 % blocks never given process noise: sensor models
 cfg.processNoise.exclude = 'Sensor';
-% mode 'rel' multiplies the parameter by (1 + n), 'abs' adds n;
-% std is the stationary standard deviation of n, tau its correlation time (s)
+% Unlike parameter variation, every matching rule applies, so several
+% sources can act on one parameter.
+%   mode   - 'rel' multiplies the parameter by (1 + n), 'abs' adds n
+%   std    - stationary standard deviation of n
+%   tau    - correlation time of n in seconds; for oscillatory sources, the
+%            decay time of the oscillation (several periods: regular cycles)
+%   period - 0 for a slow wander with no preferred frequency (first order),
+%            or the cycle period in seconds for quasi-periodic noise (second
+%            order). See processNoiseModel.
 cfg.processNoise.rules = [
-    processRule('AmbientTemp/AmbientTemp$',               '^Constant$', 'abs', 0.2,   600)
-    processRule('Inverter\d/VoutSetpoint$',               '^Se$',       'rel', 0.002, 2)
-    processRule('LoadBank.*/(R|Resistance|R1|R2)$',       '^R$',        'rel', 0.005, 5)
+    % ambient: slow drift plus HVAC cycling (~20 min, coherent over ~2 cycles)
+    processRule('AmbientTemp/AmbientTemp$',               '^Constant$', 'abs', 0.2,   600,  0)
+    processRule('AmbientTemp/AmbientTemp$',               '^Constant$', 'abs', 0.3,   2400, 1200)
+    processRule('Inverter\d/VoutSetpoint$',               '^Se$',       'rel', 0.002, 2,    0)
+    processRule('LoadBank.*/(R|Resistance|R1|R2)$',       '^R$',        'rel', 0.005, 5,    0)
     ];
 
 %% sensor noise (applied to the logged outputs)
@@ -116,8 +125,8 @@ function r = paramRule(path, param, relStd, absStd)
 r = struct('path', path, 'param', param, 'relStd', relStd, 'absStd', absStd);
 end
 
-function r = processRule(path, param, mode, std, tau)
-r = struct('path', path, 'param', param, 'mode', mode, 'std', std, 'tau', tau);
+function r = processRule(path, param, mode, std, tau, period)
+r = struct('path', path, 'param', param, 'mode', mode, 'std', std, 'tau', tau, 'period', period);
 end
 
 function c = sensorClass(pattern, whiteAbs, whiteRel, biasAbs, gainRel, quantization)

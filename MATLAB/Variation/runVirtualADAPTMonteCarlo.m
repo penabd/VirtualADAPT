@@ -11,7 +11,8 @@ function results = runVirtualADAPTMonteCarlo(nRuns, cfg)
 %   Each run k:
 %     1. draws component parameters and initial conditions
 %        (cfg.paramVariation),
-%     2. draws seeds for the process noise generators (cfg.processNoise),
+%     2. draws seeds and stationary initial states for the process noise
+%        sources (cfg.processNoise),
 %     3. simulates for cfg.stopTime seconds,
 %     4. resamples the 73 sensors to cfg.outputSampleTime,
 %     5. adds measurement error (cfg.sensorNoise).
@@ -24,7 +25,7 @@ function results = runVirtualADAPTMonteCarlo(nRuns, cfg)
 %     clean             - N x 73 readings before sensor noise (if cfg.keepClean)
 %     sensorNames       - 1 x 73 column names
 %     parameters        - parameter values used (relPath, param, nominal, value)
-%     processNoiseSeeds - seeds of the process noise generators
+%     processNoise      - process noise sources (relPath, param, seed, x0)
 %     calibration       - per-sensor bias and gain errors
 %     seed, substream   - random stream used for the run
 %
@@ -70,10 +71,15 @@ else
     pvIdx = zeros(size(params));
 end
 
-generators = struct('relPath', {}, 'param', {}, 'block', {});
+generators = struct('relPath', {}, 'param', {}, 'rule', {}, 'noise', {}, 'state', {}, 'x0Factor', {});
 if cfg.processNoise.enable
-    pnIdx = matchRules(params, cfg.processNoise.rules, cfg.processNoise.exclude);
-    generators = insertProcessNoise(params, pnIdx, cfg.processNoise);
+    % every matching rule applies, so insert one rule at a time
+    for r = 1:length(cfg.processNoise.rules)
+        pn = cfg.processNoise;
+        pn.rules = pn.rules(r);
+        pnIdx = matchRules(params, pn.rules, pn.exclude);
+        generators = [generators insertProcessNoise(params, pnIdx, pn)]; %#ok<AGROW>
+    end
 end
 
 fprintf('Varying %d parameters, %d process noise generators, %d sensors.\n', ...
@@ -90,9 +96,13 @@ for k = 1:nRuns
 
     applied = applyParameterVariation(params, pvIdx, cfg.paramVariation, stream);
 
-    pnSeeds = randi(stream, 2^31 - 2, length(generators), 1);
+    processNoise = struct('relPath', {generators.relPath}, 'param', {generators.param}, ...
+        'seed', 0, 'x0', []);
     for g = 1:length(generators)
-        set_param(generators(g).block, 'Seed', sprintf('%d', pnSeeds(g)));
+        processNoise(g).seed = randi(stream, 2^31 - 2);
+        processNoise(g).x0 = generators(g).x0Factor * randn(stream, size(generators(g).x0Factor, 1), 1);
+        set_param(generators(g).noise, 'Seed', sprintf('%d', processNoise(g).seed));
+        set_param(generators(g).state, 'X0', mat2str(processNoise(g).x0, 17));
     end
 
     fprintf('Run %d of %d...\n', k, nRuns);
@@ -124,7 +134,7 @@ for k = 1:nRuns
     end
     run.sensorNames = names;
     run.parameters = applied;
-    run.processNoiseSeeds = pnSeeds;
+    run.processNoise = processNoise;
     run.seed = cfg.seed;
     run.substream = k;
 
